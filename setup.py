@@ -5,15 +5,14 @@ setup(
     name='emeraldpm',
     version='0.0.0',
     packages=('emeraldpm',),
-    install_requires=['configobj', 'colorlog', 'cliff', 'dataclasses-json', 'requests'],
+    install_requires=['configobj', 'colorlog', 'cliff', 'dataclasses-json', 'progressbar2', 'requests'],
     entry_points={
         'console_scripts': [
             'emeraldpm = emeraldpm.__main__:main'
         ],
         'emeraldpm': [
-            'install = emeraldpm.install:InstallCommand'
-        ],
-        'emeraldpm.install': [
-            'config_hook = emeraldpm.config:ConfigCommandHook'
+            'init = emeraldpm.commands.init:InitCommand',
+            'install = emeraldpm.commands.install:InstallCommand',
+            'version = emeraldpm.commands.version:VersionCommand'
         ]
     })

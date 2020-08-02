@@ -1,6 +1,7 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
 import io
+import logging
 import os
 import tempfile
 from typing import List
@@ -8,9 +9,9 @@ import zipfile
 
 from cliff.command import Command
 
-from .api import API
-from .logging import get_logger
-from .package import Version, VersionInfo, Package, PackageID, get_cur_package
+from emeraldpm.api import API
+from emeraldpm.config import Config
+from emeraldpm.package import Version, VersionInfo, Package, PackageID
 
 
 @dataclass
@@ -38,26 +39,40 @@ class _PackageToInstall:
 
 
 class InstallCommand(Command):
-    log = get_logger(__name__)
+    log = logging.getLogger(__name__)
 
     def get_parser(self, prog_name):
         parser = super().get_parser(prog_name)
         parser.add_argument('packages', nargs='*')
+        parser.add_argument('--api')
+        parser.add_argument('--token')
+        parser.add_argument('--show_progress_bar')
         return parser
 
     def take_action(self, parsed_args):
-        self._api = API(parsed_args.config)
+        config = Config(**{
+            'api': parsed_args.api,
+            'token': parsed_args.token,
+            'show_progress_bar': parsed_args.show_progress_bar
+        })
+        self._api = API(config)
 
-        cur_package = get_cur_package()
-        installing_new = not parsed_args.packages
-        if not installing_new and cur_package:
-            packages = cur_package.dependencies
-        else:
-            packages = parsed_args.packages
+        package_path = os.path.join(os.getcwd(), 'package.json')
+        try:
+            with open(package_path, 'r') as f:
+                package = Version.schema().loads(f.read())
+        except IOError:
+            self.log.exception('failed to read package.json')
+            return
 
+        if parsed_args.packages:
+            package.dependencies += [
+                PackageID(*package_id.split('@')) for package_id in parsed_args.packages
+            ]
         self._packages = {}
-        for package_id in set(packages):
-            if not self._get_package(PackageID(*package_id.split('@'))):
+        self.log.info('getting package info for %d packages', len(package.dependencies))
+        for package_id in package.dependencies:
+            if not self._get_package(package_id):
                 return
 
         modules_dir = os.path.join(os.getcwd(), 'emerald_modules')
@@ -66,16 +81,27 @@ class InstallCommand(Command):
             name = package_to_install.package.name
             version = str(package_to_install.selected_version.version)
 
+            output_path = os.path.join(modules_dir, name)
+            if os.path.exists(os.path.join(output_path, 'package.json')):
+                continue
+
             self.log.info('downloading package %s@%s', name, version)
             data = self._api.download(name, version)
 
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
-                output_path = os.path.join(modules_dir, name)
                 zf.extractall(output_path)
+
+        if parsed_args.packages:
+            try:
+                with open(package_path, 'w') as f:
+                    schema = Version.schema(exclude=package.get_schema_write_exclusions())
+                    f.write(schema.dumps(package, indent=4))
+            except IOError:
+                self.log.exception('failed to write package.json')
 
     def _get_package(self, package_id, dependent_package_id=None):
         if package_id.name not in self._packages:
-            self.log.info(
+            self.log.debug(
                 'getting package info for %s@%s...',
                 package_id.name,
                 package_id.version)

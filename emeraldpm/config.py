@@ -24,10 +24,13 @@ def _get_home_dir():
 
 
 class Config:
-    def __init__(self, api=None, token=None):
+    def __init__(self, api=None, token=None, show_progress_bar=None):
         configspec = '''
-        api=string(default='https://emeraldpm.io')
-        token=string(default=None)
+        [api]
+            api=string(default='https://emeraldpm.io')
+            token=string(default=None)
+        [logging]
+            show_progress_bar=boolean(default=True)
         '''.splitlines()
         config_file = os.path.join(
             _get_home_dir(),
@@ -35,8 +38,15 @@ class Config:
         self._config_obj = ConfigObj(config_file, configspec=configspec)
         self._config_obj.validate(Validator())
 
-        self._api = (api or self._config_obj['api']).rstrip('/')
-        self._token = token or self._config_obj['token']
+        api_config = self._config_obj['api']
+        self._api = (api or api_config['api']).rstrip('/')
+        self._token = token or api_config['token']
+
+        logging_config = self._config_obj['logging']
+        if show_progress_bar is not None:
+            self._show_progress_bar = show_progress_bar
+        else:
+            self._show_progress_bar = logging_config['show_progress_bar']
 
     @property
     def api(self):
@@ -44,7 +54,7 @@ class Config:
 
     @api.setter
     def api(self, val):
-        self._api = self._config_obj['api'] = val.rstrip('/')
+        self._api = self._config_obj['api']['api'] = val.rstrip('/')
 
     @property
     def token(self):
@@ -52,32 +62,12 @@ class Config:
 
     @token.setter
     def token(self, val):
-        self._token = self._config_obj['token'] = val
+        self._token = self._config_obj['api']['token'] = val
 
-    @classmethod
-    def add_args_to_parser(cls, parser):
-        parser.add_argument('--api')
-        parser.add_argument('--token')
+    @property
+    def show_progress_bar(self):
+        return self._show_progress_bar
 
-    @classmethod
-    def from_parsed_args(cls, parsed_args): 
-        return cls(**{
-            'api': parsed_args.api,
-            'token': parsed_args.token
-        })
-
-
-class ConfigCommandHook(CommandHook):
-    def get_parser(self, parser):
-        Config.add_args_to_parser(parser)
-        return parser
-
-    def get_epilog(self):
-        return 'add emeraldpmc configuration options'
-
-    def before(self, parsed_args):
-        parsed_args.config = Config.from_parsed_args(parsed_args)
-        return parsed_args
-
-    def after(self, parsed_args, return_code):
-        pass
+    @show_progress_bar.setter
+    def show_progress_bar(self, val):
+        self._show_progress_bar = self._config_obj['logging']['show_progress_bar'] = val

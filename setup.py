@@ -13,6 +13,7 @@ setup(
         'emeraldpm': [
             'init = emeraldpm.commands.init:InitCommand',
             'install = emeraldpm.commands.install:InstallCommand',
+            'uninstall = emeraldpm.commands.uninstall:UninstallCommand',
             'version = emeraldpm.commands.version:VersionCommand'
         ]
     })

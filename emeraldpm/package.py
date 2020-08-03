@@ -1,13 +1,40 @@
 from collections import namedtuple
-from dataclasses import asdict, dataclass, field
-from dataclasses_json import dataclass_json, config
-import json
+from dataclasses import dataclass, field
 import os
-from marshmallow import fields
 from typing import List, Optional
+
+from dataclasses_json import dataclass_json, config
+from marshmallow import fields
 
 
 PackageID = namedtuple('PackageID', 'name version', defaults=('latest',))
+
+
+class _PackageIDListField(fields.Field):
+    def _serialize(self, value, attr, obj, **kwargs):
+        return ['%s@%s' % (i.name, i.version) for i in value]
+
+    def _deserialize(self, value, attr, data, **kwargs):
+        return [PackageID(*i.split('@')) for i in value]
+
+    @staticmethod
+    def encoder(value):
+        return ['%s@%s' % (i.name, i.version) for i in value]
+
+    @staticmethod
+    def decoder(value):
+        if value and isinstance(value[0], PackageID):
+            return value
+        return [PackageID(*i.split('@')) for i in value]
+
+
+_package_id_list_field = {
+    'dataclasses_json': {
+        'encoder': _PackageIDListField.encoder,
+        'decoder': _PackageIDListField.decoder,
+        'mm_field': _PackageIDListField()
+    }
+}
 
 
 class VersionInfo:
@@ -89,16 +116,14 @@ class Version:
         ))
     description: str
     repository_url: str
-    dependencies: List[PackageID] = field(
-        metadata=config(
-            encoder=lambda x: print('shit'),
-            mm_field=fields.Raw()
-        )
+    archive: Optional[str] = None
+    readme: Optional[str] = None
+    dependencies: Optional[List[PackageID]] = field(
+        default_factory=lambda: [],
+        metadata=_package_id_list_field
     )
-    archive: str = None
-    readme: str = None
 
-    def get_schema_write_exclusions(self):
+    def get_schema_exclusions(self):
         exclusions = ['archive']
         if not self.readme:
             exclusions.append('readme')

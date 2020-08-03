@@ -33,7 +33,7 @@ class InitCommand(Command):
         package_path = os.path.join(os.getcwd(), 'package.json')
         try:
             with open(package_path, 'w') as f:
-                schema = Version.schema(exclude=package.get_schema_write_exclusions())
+                schema = Version.schema(exclude=package.get_schema_exclusions())
                 f.write(schema.dumps(package, indent=4))
         except IOError:
             self.log.exception('failed to write package.json')

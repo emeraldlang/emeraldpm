@@ -31,7 +31,7 @@ class VersionCommand(Command):
         package_path = os.path.join(os.getcwd(), 'package.json')
         try:
             with open(package_path, 'r') as f:
-                package = Version.schema().loads(f.read())
+                package = Version.schema(exclude=('archive',)).loads(f.read())
         except IOError:
             self.log.exception('failed to read package.json')
             return
@@ -49,7 +49,7 @@ class VersionCommand(Command):
 
         try:
             with open(package_path, 'w') as f:
-                schema = Version.schema(exclude=package.get_schema_write_exclusions())
+                schema = Version.schema(exclude=package.get_schema_exclusions())
                 f.write(schema.dumps(package, indent=4))
         except IOError:
             self.log.exception('failed to write package.json')

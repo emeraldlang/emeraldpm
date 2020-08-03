@@ -1,44 +1,19 @@
-from collections.abc import Iterable
-from dataclasses import dataclass
 import io
 import logging
 import os
-import tempfile
-from typing import List
 import zipfile
 
 from cliff.command import Command
 
 from emeraldpm.api import API
 from emeraldpm.config import Config
-from emeraldpm.package import Version, VersionInfo, Package, PackageID
-
-
-@dataclass
-class _PackageToInstall:
-    package: Package
-    selected_version: Version
-
-    def __post_init__(self):
-        valid_version = False
-        for version in self.package.versions:
-            if version == self.selected_version:
-                valid_version = True
-                break
-        if not valid_version:
-            raise ValueError('`selected_version` is not a version on the provided `package`.')
-
-    def is_version_compatible(self, version):
-        # We assume that all packages with the same
-        # major version will not cause any issues.
-        if isinstance(version, str): 
-            version = VersionInfo(version)
-        elif not isinstance(version, VersionInfo):
-            return False
-        return version.major == self.selected_version.version.major
+from emeraldpm.package import Version, PackageID
+from emeraldpm.resolver import Resolver
 
 
 class InstallCommand(Command):
+    "Installs a package and its dependencies"
+
     log = logging.getLogger(__name__)
 
     def get_parser(self, prog_name):
@@ -50,95 +25,64 @@ class InstallCommand(Command):
         return parser
 
     def take_action(self, parsed_args):
+        package_path = os.path.join(os.getcwd(), 'package.json')
+        try:
+            with open(package_path, 'r') as f:
+                package = Version.schema(exclude=('archive',)).loads(f.read())
+        except IOError:
+            self.log.exception('failed to read package.json')
+            return
+
+        to_resolve = set(package.dependencies)
+        if parsed_args.packages:
+            try:
+                to_resolve = to_resolve.union(set(
+                    PackageID(*package_id.split('@')) for package_id in parsed_args.packages
+                ))
+            except ValueError:
+                self.log.exception('invalid version string provided')
+                return
+
         config = Config(**{
             'api': parsed_args.api,
             'token': parsed_args.token,
             'show_progress_bar': parsed_args.show_progress_bar
         })
-        self._api = API(config)
-
-        package_path = os.path.join(os.getcwd(), 'package.json')
-        try:
-            with open(package_path, 'r') as f:
-                package = Version.schema().loads(f.read())
-        except IOError:
-            self.log.exception('failed to read package.json')
+        api = API(config)
+        resolver = Resolver(api)
+        self.log.info('getting package info for %d packages', len(to_resolve))
+        if not resolver.resolve_many(to_resolve):
             return
-
-        if parsed_args.packages:
-            package.dependencies += [
-                PackageID(*package_id.split('@')) for package_id in parsed_args.packages
-            ]
-        self._packages = {}
-        self.log.info('getting package info for %d packages', len(package.dependencies))
-        for package_id in package.dependencies:
-            if not self._get_package(package_id):
-                return
 
         modules_dir = os.path.join(os.getcwd(), 'emerald_modules')
         os.makedirs(modules_dir, exist_ok=True)
-        for package_to_install in self._packages.values():
+        for package_to_install in resolver.resolved_packages.values():
             name = package_to_install.package.name
             version = str(package_to_install.selected_version.version)
 
             output_path = os.path.join(modules_dir, name)
-            if os.path.exists(os.path.join(output_path, 'package.json')):
-                continue
+            dependency_package_path = os.path.join(output_path, 'package.json') 
+            if os.path.exists(dependency_package_path):
+                with open(dependency_package_path, 'r') as f:
+                    dependency = Version.schema(exclude=('archive',)).loads(f.read())
+                if dependency.version == package_to_install.selected_version.version:
+                    continue
 
             self.log.info('downloading package %s@%s', name, version)
-            data = self._api.download(name, version)
+            data = api.download(name, version)
 
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
                 zf.extractall(output_path)
 
-        if parsed_args.packages:
-            try:
-                with open(package_path, 'w') as f:
-                    schema = Version.schema(exclude=package.get_schema_write_exclusions())
-                    f.write(schema.dumps(package, indent=4))
-            except IOError:
-                self.log.exception('failed to write package.json')
-
-    def _get_package(self, package_id, dependent_package_id=None):
-        if package_id.name not in self._packages:
-            self.log.debug(
-                'getting package info for %s@%s...',
-                package_id.name,
-                package_id.version)
-            package = self._api.get(package_id.name)
-            if package == None:
-                self.log.error('no such package %s', package_id.name)
-                return False
-            if package_id.version != 'latest':
-                version = VersionInfo(package_id.version)
-                selected_version = None
-                # We select the maximum version that is compatible with the
-                # desired version. Compatibility means equality of major versions.
-                # If there's a breaking change in a minor release, go bother the
-                # package owner.
-                for v in package.versions:
-                    if v.version.major == version.major:
-                        selected_version = v
-            else:
-                selected_version = package.versions[0]
-                package_id = PackageID(package_id.name, package.versions[0].version)
-            self._packages[package.name] = _PackageToInstall(package, selected_version)
-            return all([
-                self._get_package(dependency_id, package_id)
-                for dependency_id in self._packages[package_id.name].selected_version.dependencies
-            ])
-
-        if package_id.version == 'latest':
-            package_id = PackageID(
-                package_id.name,
-                self._packages[package_id.name].package.versions[0].version)
-
-        if not self._packages[package_id.name].is_version_compatible(package_id.version):
-            self.log.error(
-                '%s\'s dependency on %s@%s conflicts with other packages.',
-                dependent_package_id.name if dependent_package_id else 'your package',
-                package_id.name,
-                package_id.version)
-            return False
-
-        return True
+        package.dependencies = [
+            PackageID(
+                dependency.selected_version.name,
+                str(dependency.selected_version.version))
+            for dependency in resolver.resolved_packages.values()
+        ]
+        try:
+            with open(package_path, 'w') as f:
+                schema = Version.schema(exclude=package.get_schema_exclusions())
+                f.write(schema.dumps(package, indent=4))
+        except IOError:
+            self.log.exception('failed to write package.json')

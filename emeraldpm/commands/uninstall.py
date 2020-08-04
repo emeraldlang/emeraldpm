@@ -4,7 +4,7 @@ from cliff.command import Command
 
 from emeraldpm.api import API
 from emeraldpm.config import Config
-from emeraldpm.package import Version, VersionInfo, Package, PackageID
+from emeraldpm.package import VersionSchema
 
 
 class UninstallCommand(Command):

@@ -1,43 +1,9 @@
 from collections import namedtuple
-from dataclasses import dataclass, field
-import os
-from typing import List, Optional
 
-from dataclasses_json import dataclass_json, config
-from marshmallow import fields
+from marshmallow import Schema, fields, post_dump, ValidationError
 
 
-PackageID = namedtuple('PackageID', 'name version', defaults=('latest',))
-
-
-class _PackageIDListField(fields.Field):
-    def _serialize(self, value, attr, obj, **kwargs):
-        return ['%s@%s' % (i.name, i.version) for i in value]
-
-    def _deserialize(self, value, attr, data, **kwargs):
-        return [PackageID(*i.split('@')) for i in value]
-
-    @staticmethod
-    def encoder(value):
-        return ['%s@%s' % (i.name, i.version) for i in value]
-
-    @staticmethod
-    def decoder(value):
-        if value and isinstance(value[0], PackageID):
-            return value
-        return [PackageID(*i.split('@')) for i in value]
-
-
-_package_id_list_field = {
-    'dataclasses_json': {
-        'encoder': _PackageIDListField.encoder,
-        'decoder': _PackageIDListField.decoder,
-        'mm_field': _PackageIDListField()
-    }
-}
-
-
-class VersionInfo:
+class Version:
     def __init__(self, value):
         split_version = value.split('.')
         if len(split_version) > 4:
@@ -103,38 +69,51 @@ class VersionInfo:
         return int(self) <= int(other)
 
 
+class _VersionField(fields.Field):
+    def _deserialize(self, value, *args, **kwargs):
+        try:
+            return Version(value)
+        except ValueError as e:
+            raise ValidationError('Not a valid version') from e
 
-@dataclass_json()
-@dataclass
-class Version:
-    name: str
-    version: VersionInfo = field(
-        metadata=config(
-            encoder=lambda x: str(x),
-            decoder=lambda x: VersionInfo(x),
-            mm_field=fields.String()
-        ))
-    description: str
-    repository_url: str
-    archive: Optional[str] = None
-    readme: Optional[str] = None
-    dependencies: Optional[List[PackageID]] = field(
-        default_factory=lambda: [],
-        metadata=_package_id_list_field
-    )
-
-    def get_schema_exclusions(self):
-        exclusions = ['archive']
-        if not self.readme:
-            exclusions.append('readme')
-        if not self.dependencies:
-            exclusions.append('dependencies')
-        return tuple(exclusions)
+    def _serialize(self, value, *args, **kwargs):
+        return str(value)
 
 
-@dataclass_json
-@dataclass
-class Package:
-    name: str
-    owner: str
-    versions: List[Version]
+PackageID = namedtuple('PackageID', 'name version', defaults=('latest',))
+
+
+class _PackageIDField(fields.Field):
+    def _deserialize(self, value, *args, **kwargs):
+        return PackageID(*value.split('@'))
+
+    def _serialize(self, value, *args, **kwargs):
+        return '%s@%s' % (value.name, value.version)
+
+
+class VersionSchema(Schema):
+    name = fields.Str(required=True)
+    version = _VersionField(required=True)
+    description = fields.Str(required=False, missing=None)
+    repository_url = fields.Str(required=False, missing=None)
+    archive = fields.URL(required=False, load_only=True, missing=None)
+    readme = fields.Str(required=False, missing=None)
+    dependencies = fields.List(_PackageIDField(), missing=lambda: [])
+
+    @post_dump
+    def remove_values(self, data, many):
+        return {
+            key: value for key, value in data.items() if value
+        }
+
+    class Meta:
+        ordered = True
+
+
+class PackageSchema(Schema):
+    name = fields.Str(required=True)
+    owner = fields.Str(required=True)
+    versions = fields.List(fields.Nested(VersionSchema))
+
+    class Meta:
+        ordered = True

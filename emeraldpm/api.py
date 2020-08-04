@@ -1,7 +1,7 @@
 import progressbar
 import requests
 
-from .package import Package, Version
+from .package import PackageSchema, VersionSchema
 
 
 class API:
@@ -51,17 +51,17 @@ class API:
             url = '%s/api/packages/package/%s/' % (
                 self._config.api,
                 name)
-            cls = Package
+            schema = PackageSchema()
         else:
             url = '%s/api/packages/package/%s/%s/' % (
                 self._config.api,
                 name,
                 version)
-            cls = Version
+            schema = VersionSchema()
         res = requests.get(url)
         if res.status_code == 404:
             return None
-        return cls.schema().loads(res.text)
+        return schema.loads(res.text)
 
     def publish(self, package):
         pass

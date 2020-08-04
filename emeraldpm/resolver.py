@@ -1,17 +1,17 @@
 from dataclasses import dataclass
 import logging
 
-from .package import Package, PackageID, Version, VersionInfo
+from .package import PackageID, Version
 
 
 @dataclass
 class ResolvedPackage:
-    package: Package
-    selected_version: Version
+    package: dict
+    selected_version: dict
 
     def __post_init__(self):
         valid_version = False
-        for version in self.package.versions:
+        for version in self.package['versions']:
             if version == self.selected_version:
                 valid_version = True
                 break
@@ -22,10 +22,10 @@ class ResolvedPackage:
         # We assume that all packages with the same
         # major version will not cause any issues.
         if isinstance(version, str): 
-            version = VersionInfo(version)
-        elif not isinstance(version, VersionInfo):
-            raise ValueError('expected version to be an instance of `str` or `VersionInfo`')
-        return version.major == self.selected_version.version.major
+            version = Version(version)
+        elif not isinstance(version, Version):
+            raise ValueError('expected version to be an instance of `str` or `Version`')
+        return version.major == self.selected_version['version'].major
 
 
 class Resolver:
@@ -59,28 +59,28 @@ class Resolver:
                 self.log.error('no such package %s', package_id.name)
                 return False
             if package_id.version != 'latest':
-                version = VersionInfo(package_id.version)
+                version = Version(package_id.version)
                 selected_version = None
                 # We select the maximum version that is compatible with the
                 # desired version. Compatibility means equality of major versions.
                 # If there's a breaking change in a minor release, go bother the
                 # package owner.
-                for v in package.versions:
-                    if v.version.major == version.major:
+                for v in package['versions']:
+                    if v['version'].major == version.major:
                         selected_version = v
             else:
-                selected_version = package.versions[0]
-                package_id = PackageID(package_id.name, package.versions[0].version)
-            self._packages[package.name] = ResolvedPackage(package, selected_version)
+                selected_version = package['versions'][0]
+                package_id = PackageID(package_id.name, package['versions'][0]['version'])
+            self._packages[package_id.name] = ResolvedPackage(package, selected_version)
             return all([
                 self._resolve_recursive(dependency_id, package_id)
-                for dependency_id in self._packages[package_id.name].selected_version.dependencies
+                for dependency_id in self._packages[package_id.name].selected_version['dependencies']
             ])
 
         if package_id.version == 'latest':
             package_id = PackageID(
                 package_id.name,
-                self._packages[package_id.name].package.versions[0].version)
+                self._packages[package_id.name].package['versions'][0]['version'])
 
         if not self._packages[package_id.name].is_version_compatible(package_id.version):
             self.log.error(

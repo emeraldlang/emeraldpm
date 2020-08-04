@@ -7,7 +7,7 @@ from cliff.command import Command
 
 from emeraldpm.api import API
 from emeraldpm.config import Config
-from emeraldpm.package import Version, PackageID
+from emeraldpm.package import PackageID, VersionSchema
 from emeraldpm.resolver import Resolver
 
 
@@ -28,12 +28,12 @@ class InstallCommand(Command):
         package_path = os.path.join(os.getcwd(), 'package.json')
         try:
             with open(package_path, 'r') as f:
-                package = Version.schema(exclude=('archive',)).loads(f.read())
+                package = VersionSchema().loads(f.read())
         except IOError:
             self.log.exception('failed to read package.json')
             return
 
-        to_resolve = set(package.dependencies)
+        to_resolve = set(package['dependencies'])
         if parsed_args.packages:
             try:
                 to_resolve = to_resolve.union(set(
@@ -50,22 +50,22 @@ class InstallCommand(Command):
         })
         api = API(config)
         resolver = Resolver(api)
-        self.log.info('getting package info for %d packages', len(to_resolve))
+        self.log.info('resolving %d packages', len(to_resolve))
         if not resolver.resolve_many(to_resolve):
             return
 
         modules_dir = os.path.join(os.getcwd(), 'emerald_modules')
         os.makedirs(modules_dir, exist_ok=True)
         for package_to_install in resolver.resolved_packages.values():
-            name = package_to_install.package.name
-            version = str(package_to_install.selected_version.version)
+            name = package_to_install.package['name']
+            version = str(package_to_install.selected_version['version'])
 
             output_path = os.path.join(modules_dir, name)
             dependency_package_path = os.path.join(output_path, 'package.json') 
             if os.path.exists(dependency_package_path):
                 with open(dependency_package_path, 'r') as f:
-                    dependency = Version.schema(exclude=('archive',)).loads(f.read())
-                if dependency.version == package_to_install.selected_version.version:
+                    dependency = VersionSchema().loads(f.read())
+                if dependency.version == package_to_install.selected_version['version']:
                     continue
 
             self.log.info('downloading package %s@%s', name, version)
@@ -74,15 +74,14 @@ class InstallCommand(Command):
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
                 zf.extractall(output_path)
 
-        package.dependencies = [
+        package['dependencies'] = [
             PackageID(
-                dependency.selected_version.name,
-                str(dependency.selected_version.version))
+                dependency.selected_version['name'],
+                str(dependency.selected_version['version']))
             for dependency in resolver.resolved_packages.values()
         ]
         try:
             with open(package_path, 'w') as f:
-                schema = Version.schema(exclude=package.get_schema_exclusions())
-                f.write(schema.dumps(package, indent=4))
+                f.write(VersionSchema().dumps(package, indent=4))
         except IOError:
             self.log.exception('failed to write package.json')

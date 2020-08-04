@@ -1,8 +1,6 @@
 import os
 import sys
 
-from cliff.hooks import CommandHook
-
 from configobj import ConfigObj
 from validate import Validator
 

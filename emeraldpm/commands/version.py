@@ -4,14 +4,14 @@ import os
 
 from cliff.command import Command
 
-from emeraldpm.package import Version
+from emeraldpm.package import Version, VersionSchema
 
 
 def _check_version(value):
     if value in ('major', 'minor', 'patch', 'build'):
         return value
     try:
-        return VersionInfo(value)
+        return Version(value)
     except ValueError:
         raise argparse.ArgumentTypeError('%s is not a valid version' % value)
 
@@ -31,25 +31,25 @@ class VersionCommand(Command):
         package_path = os.path.join(os.getcwd(), 'package.json')
         try:
             with open(package_path, 'r') as f:
-                package = Version.schema(exclude=('archive',)).loads(f.read())
+                package = VersionSchema().loads(f.read())
         except IOError:
             self.log.exception('failed to read package.json')
             return
 
-        if parsed_args.version == 'major':
-            package.version.inc_major()
-        elif parsed_args.version == 'minor':
-            package.version.inc_minor()
-        elif parsed_args.version == 'patch':
-            package.version.inc_patch()
-        elif parsed_args.version == 'build':
-            package.version.inc_build()
+        if isinstance(parsed_args.version, str):
+            if parsed_args.version == 'major':
+                package['version'].inc_major()
+            elif parsed_args.version == 'minor':
+                package['version'].inc_minor()
+            elif parsed_args.version == 'patch':
+                package['version'].inc_patch()
+            elif parsed_args.version == 'build':
+                package['version'].inc_build()
         else:
-            package.version = parsed_args.version
+            package['version'] = parsed_args.version
 
         try:
             with open(package_path, 'w') as f:
-                schema = Version.schema(exclude=package.get_schema_exclusions())
-                f.write(schema.dumps(package, indent=4))
+                f.write(VersionSchema().dumps(package, indent=4))
         except IOError:
             self.log.exception('failed to write package.json')
